@@ -1,5 +1,6 @@
 package org.dutchaug.ble.hackathon.receiver;
 
+import android.bluetooth.BluetoothDevice;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -16,8 +17,8 @@ public class IBeaconReceiver extends BroadcastReceiver {
 
     private final IBeaconDetection listener;
 
-    public static interface IBeaconDetection {
-        public void onIBeacon(UUID uuid, short major, short minor, double range);
+    public interface IBeaconDetection {
+        void onIBeacon(UUID uuid, short major, short minor, double range);
     }
 
     private IBeaconReceiver(IBeaconDetection l) {
@@ -27,7 +28,6 @@ public class IBeaconReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent.getAction().equals(BluetoothDetectionService.ACTION_DEVICE_DETECTED)) {
-            //Timber.i("checking for ibeacon");
             byte[] scanRecord = intent.getByteArrayExtra(BluetoothDetectionService.EXTRA_SCAN_RECORD);
             int rssi = intent.getIntExtra(BluetoothDetectionService.EXTRA_RSSI, -1);
 
