@@ -4,8 +4,10 @@ import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.IBinder;
 
 import java.util.concurrent.Callable;
@@ -27,7 +29,13 @@ public class BluetoothDetectionService extends Service implements Callable<Void>
 
     private ExecutorService executorService = Executors.newSingleThreadExecutor();
 
+    private final BroadcastReceiver receiver = new BluetoothStateReceiver();
+
     private volatile boolean running = false;
+    private volatile boolean skipScanning = false;
+
+    private long TIME_SCANNING = 5; //in seconds
+    private long TIME_IDLE = 3; //in seconds
 
     public BluetoothDetectionService() {
     }
@@ -47,7 +55,7 @@ public class BluetoothDetectionService extends Service implements Callable<Void>
 
     @Override
     public void onDestroy() {
-        running = false;
+        running = false; //stops the background thread
         super.onDestroy();
     }
 
@@ -58,24 +66,41 @@ public class BluetoothDetectionService extends Service implements Callable<Void>
         final BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         BluetoothAdapter adapter = bluetoothManager.getAdapter();
 
-        while (running) {
-            try {
-                detect(adapter);
-            } catch (Exception e) {
-                Timber.e(e, "Stopping BLE detection");
-                //stop the service
-                running = false;
+        if (adapter == null) {
+            Timber.w("No Bluetooth adapter found");
+            return null;
+        }
+
+        if (!adapter.isEnabled()) {
+            Timber.w("Bluetooth adapter is disabled");
+        }
+
+        IntentFilter filter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+        registerReceiver(receiver, filter);
+
+        try {
+            while (running) {
+                running = detect(adapter);
+                TimeUnit.SECONDS.sleep(TIME_IDLE);
             }
-            TimeUnit.SECONDS.sleep(3);
+        } finally {
+            unregisterReceiver(receiver);
         }
 
         return null;
     }
 
-    private void detect(BluetoothAdapter adapter) throws Exception {
+    private boolean detect(BluetoothAdapter adapter) {
         adapter.startLeScan(this);
-        TimeUnit.SECONDS.sleep(5);
+        try {
+            TimeUnit.SECONDS.sleep(TIME_SCANNING);
+        }
+        catch (InterruptedException e) {
+            return false;
+        }
         adapter.stopLeScan(this);
+
+        return true;
     }
 
     @Override
@@ -86,7 +111,32 @@ public class BluetoothDetectionService extends Service implements Callable<Void>
         broadcast.putExtra(EXTRA_RSSI, rssi);
         broadcast.putExtra(EXTRA_SCAN_RECORD, scanRecord);
 
-        //Timber.i("broadcast... %s", device);
         sendBroadcast(broadcast);
     }
+
+    private class BluetoothStateReceiver extends BroadcastReceiver {
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent.getAction().equals(BluetoothAdapter.ACTION_STATE_CHANGED)) {
+                switch (intent.getIntExtra(BluetoothAdapter.EXTRA_CONNECTION_STATE, -1)) {
+                    case BluetoothAdapter.STATE_OFF:
+                        //adapter is disabled
+                    case BluetoothAdapter.STATE_CONNECTING:
+                    case BluetoothAdapter.STATE_CONNECTED:
+                        //adapter is connected to via GATT to a device
+                    case BluetoothAdapter.STATE_TURNING_ON:
+                    case BluetoothAdapter.STATE_TURNING_OFF:
+                        skipScanning = true;
+                        break;
+                    case BluetoothAdapter.STATE_DISCONNECTED:
+                    case BluetoothAdapter.STATE_DISCONNECTING:
+                    case BluetoothAdapter.STATE_ON:
+                        skipScanning = false;
+                        break;
+                }
+            }
+        }
+    }
+
 }
